@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.templating import Jinja2Templates
 from starlette.background import BackgroundTask
-
+from chatgpt.globals import TOKENS_FILE
 from chatgpt.ChatService import ChatService
 from chatgpt.authorization import refresh_all_tokens
 import chatgpt.globals as globals
@@ -18,7 +18,7 @@ from chatgpt.reverseProxy import chatgpt_reverse_proxy
 from utils.Logger import logger
 from utils.config import api_prefix, scheduled_refresh
 from utils.retry import async_retry
-
+import os
 warnings.filterwarnings("ignore")
 
 app = FastAPI()
@@ -89,7 +89,23 @@ async def send_conversation(request: Request, req_token: str = Depends(oauth2_sc
 
 @app.get(f"/{api_prefix}/tokens" if api_prefix else "/tokens", response_class=HTMLResponse)
 async def upload_html(request: Request):
-    tokens_count = len(set(globals.token_list) - set(globals.error_token_list))
+    token_list1=[]
+    if os.path.exists(TOKENS_FILE):
+        with open(TOKENS_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip() and not line.startswith("#"):
+                    token_list1.append(line.strip())
+    tokens_count = len(token_list1)
+    # logger.info(f"token_list content: {token_list1}")
+    # logger.info(f"error_token_list content: {globals.error_token_list}")
+    logger.info(f"token_list length: {len(token_list1)}")
+    logger.info(f"error_token_list length: {len(globals.error_token_list)}")
+    
+    tokens_count = len(set(token_list1) - set(globals.error_token_list))  
+    logger.info(f"tokens_count:{tokens_count}")
+    
+
+    # tokens_count = len(set(globals.token_list) - set(globals.error_token_list))
     return templates.TemplateResponse("tokens.html",
                                       {"request": request, "api_prefix": api_prefix, "tokens_count": tokens_count})
 
