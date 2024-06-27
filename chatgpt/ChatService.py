@@ -20,6 +20,14 @@ from utils.Logger import logger
 from utils.config import proxy_url_list, chatgpt_base_url_list, arkose_token_url_list, history_disabled, pow_difficulty, \
     conversation_only, enable_limit, upload_by_url, check_model, auth_key
 
+def remove_line_with_credentials(req_token):
+    with open("data/token.txt", 'r+') as file:
+        lines = file.readlines()
+        file.seek(0)
+        file.truncate()  # 清空文件内容
+        for line in lines:
+            if req_token not in line:
+                file.write(line)
 
 class ChatService:
     def __init__(self, origin_token=None):
@@ -236,6 +244,9 @@ class ChatService:
                     detail = r.text
                 if "cf-please-wait" in detail:
                     raise HTTPException(status_code=r.status_code, detail="cf-please-wait")
+                if r.status_code == 401: 
+                    remove_line_with_credentials(self.req_token)  
+                    raise HTTPException(status_code=r.status_code, detail="Could not parse your authentication token")
                 if r.status_code == 429:
                     raise HTTPException(status_code=r.status_code, detail="rate-limit")
                 raise HTTPException(status_code=r.status_code, detail=detail)
