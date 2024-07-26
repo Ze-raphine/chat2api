@@ -111,7 +111,7 @@ class ChatService:
             'User-Agent': self.user_agent
         }
         if self.access_token:
-            self.base_url = self.host_url + "/backend-api"
+            self.base_url = self.host_url
             self.base_headers['Authorization'] = f'Bearer {self.access_token}'
             if self.account_id:
                 self.base_headers['Chatgpt-Account-Id'] = self.account_id
