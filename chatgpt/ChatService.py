@@ -14,11 +14,12 @@ from chatgpt.authorization import get_req_token, verify_token
 from chatgpt.chatFormat import api_messages_to_chat, stream_response, wss_stream_response, format_not_stream_response
 from chatgpt.chatLimit import check_is_limit, handle_request_limit
 from chatgpt.proofofWork import get_config, get_dpl, get_answer_token, get_requirements_token
+from chatgpt.turnstile import process_turnstile
 from chatgpt.wssClient import token2wss, set_wss
 from utils.Client import Client
 from utils.Logger import logger
 from utils.config import proxy_url_list, chatgpt_base_url_list, arkose_token_url_list, history_disabled, pow_difficulty, \
-    conversation_only, enable_limit, upload_by_url, check_model, auth_key
+    conversation_only, enable_limit, upload_by_url, check_model, auth_key, user_agents_list
 
 def remove_line_with_credentials(req_token):
     with open("data/token.txt", 'r+') as file:
@@ -31,7 +32,7 @@ def remove_line_with_credentials(req_token):
 
 class ChatService:
     def __init__(self, origin_token=None):
-        self.user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0"
+        self.user_agent = random.choice(user_agents_list) if user_agents_list else "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
         self.req_token = get_req_token(origin_token)
         self.chat_token = "gAAAAAB"
         self.s = None
@@ -86,6 +87,7 @@ class ChatService:
         self.persona = None
         self.arkose_token = None
         self.proof_token = None
+        self.turnstile_token = None
 
         self.chat_headers = None
         self.chat_request = None
@@ -126,7 +128,9 @@ class ChatService:
     async def set_model(self):
         self.origin_model = self.data.get("model", "gpt-3.5-turbo-0125")
         self.resp_model = model_proxy.get(self.origin_model, self.origin_model)
-        if "gpt-4o" in self.origin_model:
+        if "gpt-4o-mini" in self.origin_model:
+            self.req_model = "gpt-4o-mini"
+        elif "gpt-4o" in self.origin_model:
             self.req_model = "gpt-4o"
         elif "gpt-4-mobile" in self.origin_model:
             self.req_model = "gpt-4-mobile"
@@ -159,7 +163,8 @@ class ChatService:
         headers = self.base_headers.copy()
         try:
             config = get_config(self.user_agent)
-            data = {'p': get_requirements_token(config)}
+            p = get_requirements_token(config)
+            data = {'p': p}
             r = await self.s.post(url, headers=headers, json=data, timeout=5)
             if r.status_code == 200:
                 resp = r.json()
@@ -190,11 +195,15 @@ class ChatService:
                                 "code": "model_not_found"
                             })
 
-                # turnstile = resp.get('turnstile', {})
-                # turnstile_required = turnstile.get('required')
-                # if turnstile_required:
-                #     logger.info("Turnstile required: ignore")
-                #     raise HTTPException(status_code=403, detail="Turnstile required")
+                turnstile = resp.get('turnstile', {})
+                turnstile_required = turnstile.get('required')
+                if turnstile_required:
+                    turnstile_dx = turnstile.get("dx")
+                    try:
+                        self.turnstile_token = process_turnstile(turnstile_dx, p)
+                    except Exception as e:
+                        logger.info(f"Turnstile ignored: {e}")
+                    # raise HTTPException(status_code=403, detail="Turnstile required")
 
                 arkose = resp.get('arkose', {})
                 arkose_required = arkose.get('required')
@@ -270,10 +279,14 @@ class ChatService:
         if self.arkose_token:
             self.chat_headers['Openai-Sentinel-Arkose-Token'] = self.arkose_token
 
+        if self.turnstile_token:
+            self.chat_headers['Openai-Sentinel-Turnstile-Token'] = self.turnstile_token
+
         if conversation_only:
             self.chat_headers.pop('Openai-Sentinel-Chat-Requirements-Token', None)
             self.chat_headers.pop('Openai-Sentinel-Proof-Token', None)
             self.chat_headers.pop('Openai-Sentinel-Arkose-Token', None)
+            self.chat_headers.pop('Openai-Sentinel-Turnstile-Token', None)
 
         if "gpt-4-gizmo" in self.origin_model:
             gizmo_id = self.origin_model.split("gpt-4-gizmo-")[-1]
